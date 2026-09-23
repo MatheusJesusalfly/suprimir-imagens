@@ -21,20 +21,16 @@ Baixe o `SuprimirImagens.exe` na aba **Actions** (execução mais recente → *A
 
 ## Como usar
 
-**Pelo executável (Windows)**
+![Interface](captura.png)
 
-- Dê dois cliques no `SuprimirImagens.exe` e selecione os arquivos; ou
-- Arraste um arquivo ou uma pasta sobre o ícone do `.exe`.
+1. Abra o `SuprimirImagens.exe`.
+2. Arraste arquivos ou pastas para a janela — ou use **Selecionar arquivos** / **Selecionar pasta**.
+3. Clique em **Suprimir imagens**.
+4. Cada arquivo mostra o resultado ao lado. **Abrir pasta** leva direto aos arquivos gerados.
 
-**Pela linha de comando**
+A opção *Manter imagens de cabeçalho e rodapé* (somente Word) preserva logotipos do cabeçalho.
 
-```
-SuprimirImagens.exe documento.pdf
-SuprimirImagens.exe C:\pasta\com\documentos\
-SuprimirImagens.exe documento.docx --manter-cabecalho
-```
-
-`--manter-cabecalho` (somente DOCX): preserva imagens de cabeçalho e rodapé, como logotipos.
+Também é possível arrastar arquivos diretamente sobre o ícone do `.exe`: a janela abre com eles já na lista.
 
 ## Arquivos gerados
 
@@ -53,7 +49,7 @@ Se a verificação indicar **FALHOU**, o arquivo gerado ainda contém imagens e 
 ## Rodar a partir do código-fonte
 
 ```
-pip install pymupdf lxml
+pip install pymupdf lxml customtkinter tkinterdnd2
 python suprimir_imagens.py
 ```
 
@@ -62,8 +58,8 @@ python suprimir_imagens.py
 O `.exe` é gerado automaticamente pelo GitHub Actions a cada atualização na branch `main`. Para gerar localmente em um Windows com Python:
 
 ```
-pip install pymupdf lxml pyinstaller
-python -m PyInstaller --onefile --console --name SuprimirImagens suprimir_imagens.py
+pip install pymupdf lxml customtkinter tkinterdnd2 pyinstaller
+python -m PyInstaller --onefile --windowed --name SuprimirImagens --collect-all customtkinter --collect-all tkinterdnd2 suprimir_imagens.py
 ```
 
 ## Licença

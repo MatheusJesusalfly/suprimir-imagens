@@ -5,18 +5,17 @@ SUPRIMIR IMAGENS - remove todas as imagens de documentos PDF e DOCX.
 Roda 100% offline (nenhuma conexao de rede e usada).
 
 Uso:
-    python suprimir_imagens.py                      -> abre janela para escolher arquivos
-    python suprimir_imagens.py documento.pdf       -> processa um arquivo
-    python suprimir_imagens.py pasta/               -> processa todos PDF/DOCX da pasta
-    python suprimir_imagens.py documento.docx --manter-cabecalho
-          (DOCX: preserva imagens de cabecalho/rodape, ex.: logotipo)
+    Dois cliques no SuprimirImagens.exe -> abre a janela
+    Arrastar arquivos/pastas sobre o icone do .exe ou para dentro da janela
+    Linha de comando (sem janela):
+        python suprimir_imagens.py --cli documento.pdf pasta/ [--manter-cabecalho]
 
 Saida (ao lado do original, que NUNCA e alterado):
     <nome>_SEM_IMAGENS.pdf / .docx
     <nome>_SEM_IMAGENS_log.txt  (hashes SHA-256, contagem e verificacao)
 
 Dependencias (instalar uma vez):
-    pip install pymupdf lxml
+    pip install pymupdf lxml customtkinter tkinterdnd2
 """
 
 import argparse
@@ -245,8 +244,9 @@ def protegido_midia(nome, arquivos, manter_cabecalho):
     return usado_cab
 
 
-# ----------------------------------------------------------------- main
+# ----------------------------------------------------------------- processamento
 def processar(path, manter_cabecalho):
+    """Processa um arquivo e devolve (total, ok, detalhe, caminho_gerado)."""
     ext = os.path.splitext(path)[1].lower()
     dst = caminho_saida(path)
     if ext == ".pdf":
@@ -254,8 +254,7 @@ def processar(path, manter_cabecalho):
     elif ext == ".docx":
         total, ok, detalhe = processar_docx(path, dst, manter_cabecalho)
     else:
-        print(f"  ignorado (formato nao suportado): {path}")
-        return None
+        raise RuntimeError("formato nao suportado")
 
     log = os.path.splitext(dst)[0] + "_log.txt"
     with open(log, "w", encoding="utf-8") as f:
@@ -267,12 +266,215 @@ def processar(path, manter_cabecalho):
         f.write(f"SHA-256 gerado:   {sha256(dst)}\n")
         f.write(f"Imagens suprimidas: {total}\n")
         f.write(f"Verificacao:      {'OK' if ok else 'FALHOU'} - {detalhe}\n")
+    return total, ok, detalhe, dst
 
-    status = "OK" if ok else "ATENCAO: VERIFICACAO FALHOU - NAO USAR"
-    print(f"  {os.path.basename(path)} -> {total} imagem(ns) suprimida(s) | {status}")
-    if not ok:
-        print(f"    {detalhe}")
-    return ok
+
+def expandir(caminhos):
+    arquivos = []
+    for c in caminhos:
+        if os.path.isdir(c):
+            for n in sorted(os.listdir(c)):
+                if n.lower().endswith((".pdf", ".docx")) and "_SEM_IMAGENS" not in n:
+                    arquivos.append(os.path.join(c, n))
+        elif c.lower().endswith((".pdf", ".docx")) and "_SEM_IMAGENS" not in c:
+            arquivos.append(c)
+    return arquivos
+
+
+def abrir_pasta(pasta):
+    import subprocess
+    if os.name == "nt":
+        os.startfile(pasta)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", pasta])
+    else:
+        subprocess.Popen(["xdg-open", pasta])
+
+
+# ----------------------------------------------------------------- interface
+def iniciar_interface(iniciais):
+    import threading
+    import tkinter as tk
+    from tkinter import filedialog
+    import customtkinter as ctk
+
+    try:  # arrastar e soltar (opcional)
+        from tkinterdnd2 import TkinterDnD, DND_FILES
+        class Base(ctk.CTk, TkinterDnD.DnDWrapper):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                self.TkdndVersion = TkinterDnD._require(self)
+        DND = True
+    except Exception:
+        Base, DND = ctk.CTk, False
+
+    ctk.set_appearance_mode("system")
+    ctk.set_default_color_theme("blue")
+
+    AZUL, VERDE, VERMELHO, CINZA = "#1f6aa5", "#2e8b57", "#c0392b", ("gray45", "gray65")
+
+    app = Base()
+    app.title("Suprimir Imagens")
+    app.geometry("700x640")
+    app.minsize(600, 560)
+
+    estado = {"arquivos": [], "linhas": {}, "rodando": False, "ultima_pasta": None}
+
+    # cabecalho
+    topo = ctk.CTkFrame(app, fg_color="transparent")
+    topo.pack(fill="x", padx=24, pady=(20, 6))
+    ctk.CTkLabel(topo, text="Suprimir Imagens", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+    ctk.CTkLabel(topo, text="Remove as imagens de documentos PDF e Word. Funciona offline — nada sai do computador.",
+                 text_color=CINZA, font=ctk.CTkFont(size=13)).pack(anchor="w")
+
+    # area de soltar
+    zona = ctk.CTkFrame(app, corner_radius=12, border_width=2, border_color=("gray75", "gray30"))
+    zona.pack(fill="x", padx=24, pady=(14, 8))
+    ctk.CTkLabel(zona, text="⬇", font=ctk.CTkFont(size=26), text_color=CINZA).pack(pady=(14, 0))
+    ctk.CTkLabel(zona, text="Arraste arquivos ou pastas aqui" if DND else "Selecione os arquivos ou uma pasta",
+                 font=ctk.CTkFont(size=14, weight="bold")).pack()
+    ctk.CTkLabel(zona, text="PDF e DOCX", text_color=CINZA, font=ctk.CTkFont(size=12)).pack()
+    bts = ctk.CTkFrame(zona, fg_color="transparent")
+    bts.pack(pady=(8, 14))
+
+    # rodape (empacotado de baixo para cima, para nunca ser cortado)
+    rod = ctk.CTkFrame(app, fg_color="transparent")
+    rod.pack(side="bottom", fill="x", padx=24, pady=(6, 20))
+    bt_exec = ctk.CTkButton(rod, text="Suprimir imagens", width=170, height=38,
+                            font=ctk.CTkFont(size=14, weight="bold"))
+    bt_exec.pack(side="right")
+    bt_pasta = ctk.CTkButton(rod, text="Abrir pasta", width=110, height=38, fg_color="transparent",
+                             border_width=1, text_color=("gray10", "gray90"), state="disabled")
+    bt_pasta.pack(side="right", padx=8)
+    bt_limpar = ctk.CTkButton(rod, text="Limpar lista", width=100, height=38, fg_color="transparent",
+                              border_width=1, text_color=("gray10", "gray90"))
+    bt_limpar.pack(side="left")
+
+    lbl_status = ctk.CTkLabel(app, text="", font=ctk.CTkFont(size=12), text_color=CINZA)
+    lbl_status.pack(side="bottom", anchor="w", padx=26)
+
+    barra = ctk.CTkProgressBar(app, height=6)
+    barra.set(0)
+    barra.pack(side="bottom", fill="x", padx=24, pady=(4, 2))
+
+    chk_var = tk.BooleanVar(value=False)
+    ctk.CTkCheckBox(app, text="Manter imagens de cabeçalho e rodapé (Word) — ex.: logotipo",
+                    variable=chk_var, font=ctk.CTkFont(size=12)).pack(side="bottom", anchor="w", padx=26, pady=(4, 8))
+
+    # lista
+    cab_lista = ctk.CTkFrame(app, fg_color="transparent")
+    cab_lista.pack(fill="x", padx=24, pady=(6, 2))
+    lbl_qtd = ctk.CTkLabel(cab_lista, text="Nenhum arquivo selecionado", text_color=CINZA,
+                           font=ctk.CTkFont(size=12))
+    lbl_qtd.pack(side="left")
+    lista = ctk.CTkScrollableFrame(app, corner_radius=10, height=140)
+    lista.pack(fill="both", expand=True, padx=24, pady=(0, 4))
+
+    def atualizar_qtd():
+        n = len(estado["arquivos"])
+        lbl_qtd.configure(text="Nenhum arquivo selecionado" if n == 0 else f"{n} arquivo(s)")
+
+    def adicionar(caminhos):
+        if estado["rodando"]:
+            return
+        for a in expandir(caminhos):
+            if a in estado["linhas"]:
+                continue
+            linha = ctk.CTkFrame(lista, fg_color="transparent")
+            linha.pack(fill="x", pady=2)
+            icone = "PDF" if a.lower().endswith(".pdf") else "DOC"
+            ctk.CTkLabel(linha, text=icone, width=40, corner_radius=6,
+                         fg_color=("#fde2e1", "#5a2323") if icone == "PDF" else ("#dde8f7", "#1d3552"),
+                         font=ctk.CTkFont(size=10, weight="bold")).pack(side="left", padx=(4, 8))
+            ctk.CTkLabel(linha, text=os.path.basename(a), anchor="w").pack(side="left", fill="x", expand=True)
+            st = ctk.CTkLabel(linha, text="Aguardando", text_color=CINZA, font=ctk.CTkFont(size=12))
+            st.pack(side="right", padx=8)
+            estado["arquivos"].append(a)
+            estado["linhas"][a] = (linha, st)
+        atualizar_qtd()
+
+    def limpar():
+        if estado["rodando"]:
+            return
+        for linha, _ in estado["linhas"].values():
+            linha.destroy()
+        estado["arquivos"].clear()
+        estado["linhas"].clear()
+        barra.set(0)
+        lbl_status.configure(text="")
+        bt_pasta.configure(state="disabled")
+        atualizar_qtd()
+
+    def status(a, texto, cor):
+        app.after(0, lambda: estado["linhas"][a][1].configure(text=texto, text_color=cor))
+
+    def executar():
+        if estado["rodando"]:
+            return
+        pend = [a for a in estado["arquivos"]]
+        if not pend:
+            lbl_status.configure(text="Adicione ao menos um arquivo.", text_color=VERMELHO)
+            return
+        estado["rodando"] = True
+        bt_exec.configure(state="disabled", text="Processando…")
+        manter = chk_var.get()
+
+        def trabalho():
+            falhas = 0
+            for i, a in enumerate(pend, 1):
+                status(a, "Processando…", AZUL)
+                try:
+                    total, ok, detalhe, dst = processar(a, manter)
+                    estado["ultima_pasta"] = os.path.dirname(os.path.abspath(dst))
+                    if ok:
+                        status(a, f"✓  {total} imagem(ns) removida(s)", VERDE)
+                    else:
+                        falhas += 1
+                        status(a, "✗  Verificação falhou — não usar", VERMELHO)
+                except Exception as ex:
+                    falhas += 1
+                    msg = str(ex)
+                    status(a, "✗  " + (msg[:40] + "…" if len(msg) > 40 else msg), VERMELHO)
+                app.after(0, lambda v=i / len(pend): barra.set(v))
+
+            def fim():
+                estado["rodando"] = False
+                bt_exec.configure(state="normal", text="Suprimir imagens")
+                bt_pasta.configure(state="normal")
+                if falhas:
+                    lbl_status.configure(text=f"Concluído com {falhas} problema(s).", text_color=VERMELHO)
+                else:
+                    lbl_status.configure(text="Concluído. Arquivos e logs gerados ao lado dos originais.",
+                                         text_color=VERDE)
+            app.after(0, fim)
+
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def sel_arquivos():
+        fs = filedialog.askopenfilenames(title="Selecione os documentos",
+                                         filetypes=[("Documentos", "*.pdf *.docx")])
+        adicionar(list(fs))
+
+    def sel_pasta():
+        p = filedialog.askdirectory(title="Selecione a pasta")
+        if p:
+            adicionar([p])
+
+    ctk.CTkButton(bts, text="Selecionar arquivos", width=150, command=sel_arquivos).pack(side="left", padx=4)
+    ctk.CTkButton(bts, text="Selecionar pasta", width=130, fg_color="transparent", border_width=1,
+                  text_color=("gray10", "gray90"), command=sel_pasta).pack(side="left", padx=4)
+    bt_exec.configure(command=executar)
+    bt_limpar.configure(command=limpar)
+    bt_pasta.configure(command=lambda: estado["ultima_pasta"] and abrir_pasta(estado["ultima_pasta"]))
+
+    if DND:
+        def soltar(ev):
+            adicionar(list(app.tk.splitlist(ev.data)))
+        app.drop_target_register(DND_FILES)
+        app.dnd_bind("<<Drop>>", soltar)
+
+    adicionar(iniciais)
+    app.mainloop()
 
 
 def main():
@@ -280,40 +482,18 @@ def main():
     ap.add_argument("entradas", nargs="*", help="arquivos ou pastas")
     ap.add_argument("--manter-cabecalho", action="store_true",
                     help="DOCX: preserva imagens de cabecalho/rodape (ex.: logotipo)")
+    ap.add_argument("--cli", action="store_true", help="processa sem abrir a janela")
     args = ap.parse_args()
 
-    entradas = args.entradas
-    if not entradas:
-        try:
-            import tkinter as tk
-            from tkinter import filedialog
-            tk.Tk().withdraw()
-            entradas = list(filedialog.askopenfilenames(
-                title="Selecione os documentos",
-                filetypes=[("Documentos", "*.pdf *.docx")]))
-        except Exception:
-            ap.print_help()
-            return
-    arquivos = []
-    for e in entradas:
-        if os.path.isdir(e):
-            for n in sorted(os.listdir(e)):
-                if n.lower().endswith((".pdf", ".docx")) and "_SEM_IMAGENS" not in n:
-                    arquivos.append(os.path.join(e, n))
-        else:
-            arquivos.append(e)
-
-    falhas = 0
-    for a in arquivos:
-        try:
-            if processar(a, args.manter_cabecalho) is False:
-                falhas += 1
-        except Exception as ex:
-            falhas += 1
-            print(f"  ERRO em {a}: {ex}")
-    print(f"\nConcluido: {len(arquivos)} arquivo(s), {falhas} com problema.")
-    if os.name == "nt" and not args.entradas:
-        input("Enter para fechar...")
+    if args.cli:
+        for a in expandir(args.entradas):
+            try:
+                total, ok, detalhe, _ = processar(a, args.manter_cabecalho)
+                print(f"{os.path.basename(a)} -> {total} imagem(ns) | {'OK' if ok else 'FALHOU: ' + detalhe}")
+            except Exception as ex:
+                print(f"ERRO em {a}: {ex}")
+        return
+    iniciar_interface(args.entradas)
 
 
 if __name__ == "__main__":
