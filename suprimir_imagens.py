@@ -86,6 +86,20 @@ def processar_pdf(src, dst):
               hidden_text=False, metadata=False, redactions=True,
               redact_images=0, remove_links=False, reset_fields=False,
               reset_responses=False)
+    # varredura final: qualquer objeto de imagem que ainda exista no arquivo
+    # (ex.: referenciado por recursos herdados ou compartilhados entre paginas)
+    # tem o conteudo sobrescrito por 1 pixel branco. Assim nenhum dado de imagem
+    # permanece no arquivo, mesmo que o objeto continue referenciado.
+    for x in range(1, doc.xref_length()):
+        try:
+            if doc.xref_get_key(x, "Subtype")[1] != "/Image":
+                continue
+            doc.update_object(x, "<</Type/XObject/Subtype/Image/Width 1/Height 1"
+                                 "/BitsPerComponent 8/ColorSpace/DeviceGray>>")
+            doc.update_stream(x, b"\xff")
+        except Exception:
+            pass
+
     doc.save(dst, garbage=4, deflate=True, clean=True)
     doc.close()
 
